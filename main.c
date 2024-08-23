@@ -4,6 +4,23 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/wait.h>
+#include <limits.h>
+
+// convenience macro for parsing flags
+#define PF(f)\
+	if (strcmp(flag, #f) == 0) {\
+		mask |= IN_##f;\
+		continue;\
+	}
+
+// inotify instance
+int inotfd = -1;
+
+void cleanup(void)
+{
+	if (inotfd >= 0)
+		close(inotfd);
+}
 
 void usage(FILE *f, char *name)
 {
@@ -38,54 +55,18 @@ int main(int argc, char **argv)
 
 		if (*argp[0] == '-') {
 			char *flag = *argp + 1;
-			if (strcmp(flag, "ACCESS") == 0) {
-				mask |= IN_ACCESS;
-				continue;
-			}
-			if (strcmp(flag, "MODIFY") == 0) {
-				mask |= IN_MODIFY;
-				continue;
-			}
-			if (strcmp(flag, "ATTRIB") == 0) {
-				mask |= IN_ATTRIB;
-				continue;
-			}
-			if (strcmp(flag, "CLOSE_WRITE") == 0) {
-				mask |= IN_CLOSE_WRITE;
-				continue;
-			}
-			if (strcmp(flag, "CLOSE_NOWRITE") == 0) {
-				mask |= IN_CLOSE_NOWRITE;
-				continue;
-			}
-			if (strcmp(flag, "CLOSE") == 0) {
-				mask |= IN_CLOSE;
-				continue;
-			}
-			if (strcmp(flag, "OPEN") == 0) {
-				mask |= IN_OPEN;
-				continue;
-			}
-			if (strcmp(flag, "MOVED_FROM") == 0) {
-				mask |= IN_MOVED_FROM;
-				continue;
-			}
-			if (strcmp(flag, "MOVED_TO") == 0) {
-				mask |= IN_MOVED_TO;
-				continue;
-			}
-			if (strcmp(flag, "MOVE") == 0) {
-				mask |= IN_MOVE;
-				continue;
-			}
-			if (strcmp(flag, "DELETE_SELF") == 0) {
-				mask |= IN_DELETE_SELF;
-				continue;
-			}
-			if (strcmp(flag, "MOVE_SELF") == 0) {
-				mask |= IN_MOVE_SELF;
-				continue;
-			}
+			PF(ACCESS);
+			PF(MODIFY);
+			PF(ATTRIB);
+			PF(CLOSE_WRITE);
+			PF(CLOSE_NOWRITE);
+			PF(CLOSE);
+			PF(OPEN);
+			PF(MOVED_FROM);
+			PF(MOVED_TO);
+			PF(MOVE);
+			PF(DELETE_SELF);
+			PF(MOVE_SELF);
 			usage(stderr, argv[0]);
 			fprintf(stderr, "invalid flag: %s\n", *argp);
 			exit(1);
@@ -111,11 +92,13 @@ int main(int argc, char **argv)
 	memcpy(cmd_cpy, cmd, cmd_len * sizeof(*cmd_cpy));
 
 	// initialize inotify
-	int inotfd = inotify_init();
+	inotfd = inotify_init();
 	if (inotfd < 0) {
 		perror("inotify_init");
 		exit(1);
 	}
+	atexit(cleanup);
+
 	// create watches
 	int *wds = NULL;
 	wds = malloc(file_count * sizeof(*wds));
@@ -132,17 +115,25 @@ int main(int argc, char **argv)
 
 	char event_buf[sizeof(struct inotify_event)]
 	    __attribute__((aligned(__alignof__(struct inotify_event))));
+	char name_buf[PATH_MAX + 1];
 
 	for (;;) {
 		const struct inotify_event *event;
 		size_t file_id = 0;
 		size_t len = 0;
 
-		// read inotify event and get corresponding filename
-		while (len < sizeof(struct inotify_event)) {
+		// read inotify event
+		while (len < sizeof(event_buf)) {
 			len += read(inotfd, event_buf, sizeof(event_buf) - len);
 		}
 		event = (const struct inotify_event *)event_buf;
+
+		// read name field
+		len = 0;
+		while (len < event->len) {
+			len += read(inotfd, name_buf, sizeof(name_buf) - len);
+		}
+
 		if (event->mask & IN_IGNORED)
 			continue;
 		if ((event->mask & mask) == 0)
@@ -163,9 +154,8 @@ int main(int argc, char **argv)
 
 		// remove watch temporarily, in case command
 		// triggers an event
-		int wd = wds[file_id];
+		inotify_rm_watch(inotfd, wds[file_id]);
 		wds[file_id] = -1;
-		inotify_rm_watch(inotfd, wd);
 
 		// run command
 		pid_t pid = fork();
@@ -185,7 +175,7 @@ int main(int argc, char **argv)
 		wait(&status);
 		(void)status;
 
-		// re-add watch, ignore errors
+		// re-add watch
 		wds[file_id] = inotify_add_watch(inotfd, files[file_id], mask);
 	}
 }
