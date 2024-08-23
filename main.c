@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/wait.h>
+#include <glob.h>
 #include <limits.h>
 
 // convenience macro for parsing flags
@@ -37,10 +38,10 @@ int main(int argc, char **argv)
 	// parse command line arguments
 	char **cmd = NULL;
 	char **files = NULL;
+	glob_t glob_result = { 0 };
 	size_t file_count = 0;
 	char **argp = argv + 1;
 	int mask = 0;
-	files = malloc(argc * sizeof(*files));
 	for (; *argp; argp++) {
 		if (strcmp(*argp, "--") == 0) {
 			*argp = NULL;
@@ -71,10 +72,25 @@ int main(int argc, char **argv)
 			fprintf(stderr, "invalid flag: %s\n", *argp);
 			exit(1);
 		}
-
-		files[file_count++] = *argp;
+		// expand wildcard patterns
+		int first = !glob_result.gl_pathv;
+		int res = glob(*argp, first ? 0 : GLOB_APPEND, NULL,
+			       &glob_result);
+		switch (res) {
+		case GLOB_NOSPACE:
+		case GLOB_ABORTED:
+			perror("glob");
+			exit(1);
+		case GLOB_NOMATCH:
+			fprintf(stderr, "no matches for pattern %s\n", *argp);
+			exit(1);
+		default:
+			break;
+		}
 	}
-	if (!cmd || !mask || !file_count) {
+	files = glob_result.gl_pathv;
+	file_count = glob_result.gl_pathc;
+	if (!mask || !files || !cmd) {
 		usage(stderr, argv[0]);
 		exit(1);
 	}
