@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 	glob_t glob_result = { 0 };
 	size_t file_count = 0;
 	char **argp = argv + 1;
-	int mask = IN_MASK_CREATE;
+	int mask = 0;
 	for (; *argp; argp++) {
 		if (strcmp(*argp, "--") == 0) {
 			*argp = NULL;
@@ -98,6 +98,9 @@ int main(int argc, char **argv)
 		usage(stderr, argv[0]);
 		exit(1);
 	}
+	// avoid duplicate watch descriptors
+	mask |= IN_MASK_CREATE;
+
 	// initialize inotify
 	inotfd = inotify_init();
 	if (inotfd < 0) {
