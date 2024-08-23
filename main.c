@@ -29,9 +29,43 @@ void usage(FILE *f, char *name)
 	fprintf(f, "Usage: %s FLAG(S)... FILE(s)... -- COMMAND\n", name);
 }
 
+char *subst(char *str, char *with)
+{
+	char *ptr, *res, *resptr;
+	int occurs = 0;
+	int withlen = strlen(with);
+
+	for (ptr = str; *ptr; ptr++) {
+		if (*ptr == '{' && *(ptr + 1) == '}') {
+			occurs++;
+			ptr++;
+		}
+	}
+
+	res = malloc(strlen(str) + occurs * (withlen - 2) + 1);
+	if (!res) {
+		perror("malloc");
+		exit(1);
+	}
+
+	resptr = res;
+	for (ptr = str; *ptr; ptr++) {
+		if (*ptr == '{' && *(ptr + 1) == '}') {
+			ptr++;
+			memcpy(resptr, with, withlen);
+			resptr += withlen;
+			continue;
+		}
+
+		*(resptr++) = *(ptr);
+	}
+
+	*resptr = '\0';
+	return res;
+}
+
 int main(int argc, char **argv)
 {
-
 	if (argc < 4) {
 		usage(stderr, argv[0]);
 		exit(1);
@@ -176,9 +210,7 @@ int main(int argc, char **argv)
 			// substitute filenames in child process so we don't
 			// clobber parents argv
 			for (argp = cmd; *argp; argp++) {
-				if (strcmp(*argp, "{}") == 0) {
-					*argp = files[file_id];
-				}
+				*argp = subst(*argp, files[file_id]);
 			}
 
 			if (execvp(cmd[0], cmd) < 0) {
