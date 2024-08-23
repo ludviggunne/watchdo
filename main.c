@@ -5,6 +5,7 @@
 #include <sys/inotify.h>
 #include <sys/wait.h>
 #include <glob.h>
+#include <errno.h>
 #include <limits.h>
 
 // convenience macro for parsing flags
@@ -41,7 +42,7 @@ int main(int argc, char **argv)
 	glob_t glob_result = { 0 };
 	size_t file_count = 0;
 	char **argp = argv + 1;
-	int mask = 0;
+	int mask = IN_MASK_CREATE;
 	for (; *argp; argp++) {
 		if (strcmp(*argp, "--") == 0) {
 			*argp = NULL;
@@ -73,9 +74,12 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 		// expand wildcard patterns
-		int first = !glob_result.gl_pathv;
-		int res = glob(*argp, first ? 0 : GLOB_APPEND, NULL,
-			       &glob_result);
+		int res;
+		if (glob_result.gl_pathv) {
+			res = glob(*argp, GLOB_APPEND, NULL, &glob_result);
+		} else {
+			res = glob(*argp, 0, NULL, &glob_result);
+		}
 		switch (res) {
 		case GLOB_NOSPACE:
 		case GLOB_ABORTED:
@@ -94,19 +98,6 @@ int main(int argc, char **argv)
 		usage(stderr, argv[0]);
 		exit(1);
 	}
-	// create copy of command, for substituting filenames
-	size_t cmd_len = 0;
-	char **cmd_cpy = NULL;
-	for (argp = cmd; *argp; argp++) {
-		cmd_len++;
-	}
-	cmd_cpy = malloc(cmd_len * sizeof(*cmd_cpy));
-	if (!cmd_cpy) {
-		perror("malloc");
-		exit(1);
-	}
-	memcpy(cmd_cpy, cmd, cmd_len * sizeof(*cmd_cpy));
-
 	// initialize inotify
 	inotfd = inotify_init();
 	if (inotfd < 0) {
@@ -121,6 +112,11 @@ int main(int argc, char **argv)
 	int ok = 1;
 	for (size_t i = 0; i < file_count; i++) {
 		wds[i] = inotify_add_watch(inotfd, files[i], mask);
+		if (wds[i] == EEXIST) {
+			wds[i] = -1;
+			continue;
+		}
+
 		if (wds[i] < 0) {
 			perror(files[i]);
 			ok = 0;
@@ -161,13 +157,6 @@ int main(int argc, char **argv)
 			}
 		}
 
-		// substitute {} for filename in command
-		for (size_t i = 0; i < cmd_len; i++) {
-			if (strcmp(cmd[i], "{}") == 0) {
-				cmd_cpy[i] = files[file_id];
-			}
-		}
-
 		// remove watch temporarily, in case command
 		// triggers an event
 		inotify_rm_watch(inotfd, wds[file_id]);
@@ -177,12 +166,20 @@ int main(int argc, char **argv)
 		pid_t pid = fork();
 		if (pid < 0) {
 			perror("fork");
-			return 1;
+			exit(1);
 		}
 
 		if (pid == 0) {
-			if (execvp(cmd_cpy[0], cmd_cpy) < 0) {
-				perror(cmd_cpy[0]);
+			// substitute filenames in child process so we don't
+			// clobber parents argv
+			for (argp = cmd; *argp; argp++) {
+				if (strcmp(*argp, "{}") == 0) {
+					*argp = files[file_id];
+				}
+			}
+
+			if (execvp(cmd[0], cmd) < 0) {
+				perror(cmd[0]);
 				exit(1);
 			}
 		}
