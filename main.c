@@ -36,7 +36,8 @@ char *subst(char *str, char *with)
 	int withlen = strlen(with);
 
 	for (ptr = str; *ptr; ptr++) {
-		if (*ptr == '{' && *(ptr + 1) == '}') {
+		if (*ptr == '{' && *(ptr + 1) == '}'
+		    && !(ptr > str && *(ptr - 1) == '\\')) {
 			occurs++;
 			ptr++;
 		}
@@ -51,6 +52,10 @@ char *subst(char *str, char *with)
 	resptr = res;
 	for (ptr = str; *ptr; ptr++) {
 		if (*ptr == '{' && *(ptr + 1) == '}') {
+			if (ptr > str && *(ptr - 1) == '\\') {
+				*(resptr - 1) = '{';
+				continue;
+			}
 			ptr++;
 			memcpy(resptr, with, withlen);
 			resptr += withlen;
