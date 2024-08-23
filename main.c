@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 			len += read(inotfd, name_buf, sizeof(name_buf) - len);
 		}
 
-		if (event->mask & IN_IGNORED)
+		if (event->mask & (IN_IGNORED | IN_Q_OVERFLOW))
 			continue;
 		if ((event->mask & mask) == 0)
 			continue;

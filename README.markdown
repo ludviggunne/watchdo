@@ -5,13 +5,13 @@ Watches for changes on a set of files and runs commands on them.
 ```
 $ watchdo FLAGS... FILES... -- COMMAND
 ```
-The FLAGS... correspond to (some of) the inotify watch flags,
-for example -MODIFY <-> IN_MODIFY. Zero or more arguments in COMMAND
-can be set to {}, and will be substituted with the filename for which
-an event was received.
+The FLAGS... correspond to (some of) the inotify watch flags, for example
+-MODIFY corresponds to IN_MODIFY (see man inotify). Zero or more arguments in
+COMMAND can be set to {}, and will be substituted with the filename for which an
+event was received.
 
 ## Example
-The following example prints the contents of modified files:
+The following example formats C source files on write:
 ```
-$ watchdo -MODIFY a.txt b.txt c.txt -- cat {}
+$ watchdo -CLOSE_WRITE *.c *.h -- indent -linux {}
 ```
