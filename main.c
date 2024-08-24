@@ -137,9 +137,6 @@ int main(int argc, char **argv)
 		usage(stderr, argv[0]);
 		exit(1);
 	}
-	// avoid duplicate watch descriptors
-	mask |= IN_MASK_CREATE;
-
 	// initialize inotify
 	inotfd = inotify_init();
 	if (inotfd < 0) {
@@ -153,7 +150,8 @@ int main(int argc, char **argv)
 	wds = malloc(file_count * sizeof(*wds));
 	int ok = 1;
 	for (size_t i = 0; i < file_count; i++) {
-		wds[i] = inotify_add_watch(inotfd, files[i], mask);
+		wds[i] =
+		    inotify_add_watch(inotfd, files[i], mask | IN_MASK_CREATE);
 		if (wds[i] == EEXIST) {
 			wds[i] = -1;
 			continue;
@@ -199,10 +197,11 @@ int main(int argc, char **argv)
 			}
 		}
 
-		// remove watch temporarily, in case command
+		// disable watch temporarily, in case command
 		// triggers an event
-		inotify_rm_watch(inotfd, wds[file_id]);
-		wds[file_id] = -1;
+		// the man page only specifies that IN_IGNORED
+		// may be present in the event mask, but this seems to work
+		inotify_add_watch(inotfd, files[file_id], IN_IGNORED);
 
 		// run command
 		pid_t pid = fork();
@@ -228,7 +227,7 @@ int main(int argc, char **argv)
 		wait(&status);
 		(void)status;
 
-		// re-add watch
-		wds[file_id] = inotify_add_watch(inotfd, files[file_id], mask);
+		// re-enable watch
+		inotify_add_watch(inotfd, files[file_id], mask);
 	}
 }
