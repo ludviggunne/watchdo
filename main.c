@@ -82,6 +82,8 @@ int main(int argc, char **argv)
 	size_t file_count = 0;
 	char **argp = argv + 1;
 	int mask = 0;
+	int ok = 1;
+
 	for (; *argp; argp++) {
 		if (strcmp(*argp, "--") == 0) {
 			*argp = NULL;
@@ -96,6 +98,10 @@ int main(int argc, char **argv)
 
 		if (*argp[0] == '-') {
 			char *flag = *argp + 1;
+			if (strcmp(flag, "h") == 0) {
+				usage(stdout, argv[0]);
+				exit(0);
+			}
 			PF(ACCESS);
 			PF(MODIFY);
 			PF(ATTRIB);
@@ -108,9 +114,10 @@ int main(int argc, char **argv)
 			PF(MOVE);
 			PF(DELETE_SELF);
 			PF(MOVE_SELF);
+			PF(ALL_EVENTS);
 			usage(stderr, argv[0]);
 			fprintf(stderr, "invalid flag: %s\n", *argp);
-			exit(1);
+			ok = 0;
 		}
 		// expand wildcard patterns
 		int res;
@@ -126,13 +133,18 @@ int main(int argc, char **argv)
 			exit(1);
 		case GLOB_NOMATCH:
 			fprintf(stderr, "no matches for pattern %s\n", *argp);
-			exit(1);
+			ok = 0;
 		default:
 			break;
 		}
 	}
+
+	if (!ok)
+		exit(1);
+
 	files = glob_result.gl_pathv;
 	file_count = glob_result.gl_pathc;
+
 	if (!mask || !files || !cmd) {
 		usage(stderr, argv[0]);
 		exit(1);
@@ -148,7 +160,8 @@ int main(int argc, char **argv)
 	// create watches
 	int *wds = NULL;
 	wds = malloc(file_count * sizeof(*wds));
-	int ok = 1;
+	ok = 1;
+
 	for (size_t i = 0; i < file_count; i++) {
 		wds[i] =
 		    inotify_add_watch(inotfd, files[i], mask | IN_MASK_CREATE);
@@ -162,36 +175,48 @@ int main(int argc, char **argv)
 			ok = 0;
 		}
 	}
+
 	if (!ok)
 		exit(1);
 
-	char event_buf[sizeof(struct inotify_event)]
-	    __attribute__((aligned(__alignof__(struct inotify_event))));
-	char name_buf[PATH_MAX + 1];
-
 	for (;;) {
-		const struct inotify_event *event;
+		struct inotify_event event;
+		char name_buf[PATH_MAX + 1];
 		size_t file_id = 0;
-		size_t len = 0;
+		int bytes_read;
+		size_t len;
 
 		// read inotify event
-		while (len < sizeof(event_buf)) {
-			len += read(inotfd, event_buf, sizeof(event_buf) - len);
+		len = 0;
+		while (len < sizeof(event)) {
+			bytes_read = read(inotfd, &event, sizeof(event) - len);
+			if (bytes_read < 0) {
+				perror("read");
+				exit(1);
+			}
+			len += bytes_read;
 		}
-		event = (const struct inotify_event *)event_buf;
 
 		// read name field
 		len = 0;
-		while (len < event->len) {
-			len += read(inotfd, name_buf, sizeof(name_buf) - len);
+		while (len < event.len) {
+			bytes_read =
+			    read(inotfd, name_buf, sizeof(name_buf) - len);
+			if (bytes_read < 0) {
+				perror("read");
+				exit(1);
+			}
+			len += bytes_read;
 		}
 
-		if (event->mask & (IN_IGNORED | IN_Q_OVERFLOW))
+		if (event.mask & (IN_IGNORED | IN_Q_OVERFLOW))
 			continue;
-		if ((event->mask & mask) == 0)
+
+		if ((event.mask & mask) == 0)
 			continue;
+
 		for (size_t i = 0; i < file_count; i++) {
-			if (wds[i] == event->wd) {
+			if (wds[i] == event.wd) {
 				file_id = i;
 				break;
 			}
